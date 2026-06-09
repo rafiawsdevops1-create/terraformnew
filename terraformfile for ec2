@@ -1,0 +1,121 @@
+root@ip-172-31-5-95:~/ec2# ls
+aws_infra.tf  terraform.tfstate
+root@ip-172-31-5-95:~/ec2# cat aws_infra.tf
+provider "aws" {
+  region = "ap-south-1"
+}
+
+# Get Default VPC
+data "aws_vpc" "default" {
+  default = true
+}
+
+# Get Latest Amazon Linux 2 AMI
+data "aws_ami" "myami" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm*"]
+  }
+
+  filter {
+    name   = "architecture"
+    values = ["x86_64"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+# Security Group
+resource "aws_security_group" "web_sg" {
+  name        = "raviweb-server-sg"
+  description = "Allow SSH, HTTP and HTTPS traffic"
+  vpc_id      = data.aws_vpc.default.id
+
+  ingress {
+    description = "SSH Access"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTP Access"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTPS Access"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "raviweb-server-sg"
+  }
+}
+
+# EC2 Instance
+resource "aws_instance" "web_server" {
+  ami                    = data.aws_ami.myami.id
+  instance_type          = "c7i-flex.large"
+  key_name               = "terraform"
+  vpc_security_group_ids = [aws_security_group.web_sg.id]
+
+  tags = {
+    Name = "Terraform-ec2WebServer"
+  }
+}
+
+# Elastic IP
+resource "aws_eip" "web_eip" {
+  domain = "vpc"
+
+  tags = {
+    Name = "TerraformElastic-WebServer-EIP"
+  }
+}
+
+# Associate EIP with EC2
+resource "aws_eip_association" "web_eip_assoc" {
+  instance_id   = aws_instance.web_server.id
+  allocation_id = aws_eip.web_eip.id
+}
+
+# EBS Volume
+resource "aws_ebs_volume" "web_ebs" {
+  availability_zone = aws_instance.web_server.availability_zone
+  size              = 10
+  type              = "gp3"
+
+  tags = {
+    Name = "ravi-WebServer-EBS"
+  }
+}
+
+# Attach EBS Volume
+resource "aws_volume_attachment" "web_ebs_attach" {
+  device_name = "/dev/sdf"
+  volume_id   = aws_ebs_volume.web_ebs.id
+  instance_id = aws_instance.web_server.id
+
+  force_detach = true
+}
